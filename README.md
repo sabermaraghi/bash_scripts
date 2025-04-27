@@ -199,4 +199,4 @@ Open a Pull Request.
 
 License
 
-MIT License - see LICENSE for details.
+Licensed under the Apache License, Version 2.0 - see LICENSE for details.
