@@ -1,107 +1,170 @@
-Database Backup Automation Script
-Overview
-This Python script automates regular backups for MySQL and PostgreSQL databases. It creates backup directories, manages permissions, performs backups using mysqldump or pg_dump, compresses the output, and schedules the process using the schedule library. Old backups are automatically cleaned up based on a retention policy.
+import os
+import subprocess
+import datetime
+import logging
+import schedule
+import time
+import shutil
+import stat
+from typing import Dict, Optional
+import yaml
 
-Features
-Supports MySQL and PostgreSQL databases
+# Configuration file path
+CONFIG_FILE = "backup_config.yaml"
 
-Compresses backups using gzip
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("backup.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
-Configurable via YAML file
+def load_config() -> Dict:
+    """Load configuration from YAML file."""
+    try:
+        with open(CONFIG_FILE, 'r') as file:
+            return yaml.safe_load(file)
+    except FileNotFoundError:
+        logger.error(f"Configuration file {CONFIG_FILE} not found.")
+        raise
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing YAML configuration: {e}")
+        raise
 
-Automatic folder creation with secure permissions (750)
+def create_backup_folders(config: Dict) -> None:
+    """Create backup directories with appropriate permissions."""
+    backup_dir = config['backup']['directory']
+    try:
+        os.makedirs(backup_dir, exist_ok=True)
+        # Set permissions to 750 (rwxr-x---)
+        os.chmod(backup_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP)
+        logger.info(f"Created backup directory: {backup_dir}")
+    except OSError as e:
+        logger.error(f"Failed to create backup directory {backup_dir}: {e}")
+        raise
 
-Scheduled backups with customizable intervals
+def backup_mysql(config: Dict) -> Optional[str]:
+    """Perform MySQL database backup using mysqldump."""
+    db_config = config['database']
+    backup_dir = config['backup']['directory']
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.join(backup_dir, f"mysql_{db_config['name']}_{timestamp}.sql.gz")
 
-Retention policy for old backups
+    cmd = [
+        "mysqldump",
+        f"--user={db_config['user']}",
+        f"--password={db_config['password']}",
+        f"--host={db_config['host']}",
+        f"--port={db_config['port']}",
+        db_config['name'],
+        "|",
+        "gzip",
+        ">",
+        backup_file
+    ]
 
-Comprehensive logging to file and console
+    try:
+        subprocess.run(" ".join(cmd), shell=True, check=True)
+        logger.info(f"MySQL backup created: {backup_file}")
+        return backup_file
+    except subprocess.CalledProcessError as e:
+        logger.error(f"MySQL backup failed: {e}")
+        return None
 
-Error handling and retry mechanisms
+def backup_postgres(config: Dict) -> Optional[str]:
+    """Perform PostgreSQL database backup using pg_dump."""
+    db_config = config['database']
+    backup_dir = config['backup']['directory']
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.join(backup_dir, f"postgres_{db_config['name']}_{timestamp}.sql.gz")
 
-Prerequisites
-Python 3.8+
+    cmd = [
+        "pg_dump",
+        f"--username={db_config['user']}",
+        f"--host={db_config['host']}",
+        f"--port={db_config['port']}",
+        db_config['name'],
+        "|",
+        "gzip",
+        ">",
+        backup_file
+    ]
 
-Required Python packages: pyyaml, schedule
+    # Set environment variable for password
+    os.environ["PGPASSWORD"] = db_config['password']
 
-For MySQL: mysqldump command-line tool
+    try:
+        subprocess.run(" ".join(cmd), shell=True, check=True)
+        logger.info(f"PostgreSQL backup created: {backup_file}")
+        return backup_file
+    except subprocess.CalledProcessError as e:
+        logger.error(f"PostgreSQL backup failed: {e}")
+        return None
+    finally:
+        # Clear password from environment
+        os.environ.pop("PGPASSWORD", None)
 
-For PostgreSQL: pg_dump command-line tool
+def cleanup_old_backups(config: Dict) -> None:
+    """Remove backups older than the retention period."""
+    backup_dir = config['backup']['directory']
+    retention_days = config['backup']['retention_days']
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=retention_days)
 
-gzip for compression
+    for filename in os.listdir(backup_dir):
+        file_path = os.path.join(backup_dir, filename)
+        if os.path.isfile(file_path):
+            file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+            if file_mtime < cutoff:
+                try:
+                    os.remove(file_path)
+                    logger.info(f"Removed old backup: {file_path}")
+                except OSError as e:
+                    logger.error(f"Failed to remove old backup {file_path}: {e}")
 
-Installation
-Clone the repository:
+def perform_backup() -> None:
+    """Main backup function."""
+    try:
+        config = load_config()
+        create_backup_folders(config)
+        
+        db_type = config['database']['type'].lower()
+        backup_file = None
+        
+        if db_type == 'mysql':
+            backup_file = backup_mysql(config)
+        elif db_type == 'postgres':
+            backup_file = backup_postgres(config)
+        else:
+            logger.error(f"Unsupported database type: {db_type}")
+            return
 
-bash
-￼
-￼
-git clone https://github.com/yourusername/database-backup.git
-cd database-backup
-Install dependencies:
+        if backup_file:
+            cleanup_old_backups(config)
+    except Exception as e:
+        logger.error(f"Backup process failed: {e}")
 
-bash
-￼
-￼
-pip install pyyaml schedule
-Configure the backup settings in backup_config.yaml:
+def schedule_backups(config: Dict) -> None:
+    """Schedule backup jobs based on configuration."""
+    schedule.every(config['backup']['interval_hours']).hours.do(perform_backup)
+    logger.info(f"Scheduled backups every {config['backup']['interval_hours']} hours")
+    
+    while True:
+        schedule.run_pending()
+        time.sleep(60)  # Check every minute
 
-Set database type (mysql or postgres)
+def main():
+    """Entry point for the backup script."""
+    try:
+        config = load_config()
+        create_backup_folders(config)
+        schedule_backups(config)
+    except Exception as e:
+        logger.error(f"Failed to initialize backup system: {e}")
+        exit(1)
 
-Specify database credentials and connection details
-
-Define backup directory, retention period, and backup interval
-
-Usage
-Ensure the database tools (mysqldump or pg_dump) are installed and accessible.
-
-Update backup_config.yaml with your settings.
-
-Run the script:
-
-bash
-￼
-￼
-python backup_database.py
-The script will create the backup directory, set permissions, and start the backup schedule.
-
-Configuration
-Edit backup_config.yaml to customize:
-
-database: Database type, host, port, name, user, and password
-
-backup.directory: Path to store backups
-
-backup.retention_days: Number of days to keep backups
-
-backup.interval_hours: Frequency of backups in hours
-
-Logging
-Logs are written to backup.log and displayed on the console.
-
-Includes backup success/failure, cleanup operations, and errors.
-
-Deployment
-Run as a background process using nohup or a process manager like systemd.
-
-Example with nohup:
-
-bash
-￼
-￼
-nohup python backup_database.py &
-For production, consider using a systemd service for better process management.
-
-Contributing
-Fork the repository.
-
-Create a feature branch (git checkout -b feature/YourFeature).
-
-Commit changes (git commit -m 'Add YourFeature').
-
-Push to the branch (git push origin feature/YourFeature).
-
-Open a Pull Request.
-
-License
-MIT License - see LICENSE for details.
+if __name__ == "__main__":
+    main()
