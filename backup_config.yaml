@@ -1,0 +1,11 @@
+database:
+  type: mysql  # or 'postgres'
+  host: localhost
+  port: 3306  # 5432 for PostgreSQL
+  name: your_database
+  user: your_username
+  password: your_password
+backup:
+  directory: /path/to/backup/folder
+  retention_days: 7
+  interval_hours: 24
