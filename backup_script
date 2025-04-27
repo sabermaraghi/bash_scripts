@@ -1,91 +1,107 @@
-#!/usr/bin/bash
+Database Backup Automation Script
+Overview
+This Python script automates regular backups for MySQL and PostgreSQL databases. It creates backup directories, manages permissions, performs backups using mysqldump or pg_dump, compresses the output, and schedules the process using the schedule library. Old backups are automatically cleaned up based on a retention policy.
 
-# https://github.com/ssbostan/devops-bash-scripts
+Features
+Supports MySQL and PostgreSQL databases
 
-VERBOSE_OUTPUT=0
-ADD_DATE_TO_FILENAME=""
+Compresses backups using gzip
 
-usage() {
-    cat <<EOL
-Usage: $0 [OPTIONS] <source_dir> <backup_name>
-Options:
-    -v              : Verbose mode.
-    --date <format> : Add date to the backup filename.
-                      Supported formats: time, date, datetime, timestamp
+Configurable via YAML file
 
-EOL
-}
+Automatic folder creation with secure permissions (750)
 
-if [[ $# -lt 2 ]]; then
-    usage
-    exit 1
-fi
+Scheduled backups with customizable intervals
 
-while true; do
-    case $1 in
-        -v)
-            VERBOSE_OUTPUT=1
-            shift 1
-            ;;
-        --date)
-            case $2 in
-                time)
-                    ADD_DATE_TO_FILENAME=$(date +%H%M%S)
-                    ;;
-                date)
-                    ADD_DATE_TO_FILENAME=$(date +%Y%m%d)
-                    ;;
-                datetime)
-                    ADD_DATE_TO_FILENAME=$(date +%Y%m%d-%H%M%S)
-                    ;;
-                timestamp)
-                    ADD_DATE_TO_FILENAME=$(date +%s)
-                    ;;
-                *)
-                    echo "ERROR: Unsupported date format."
-                    exit 1
-                    ;;
-            esac
-            shift 2
-            ;;
-        *)
-            break
-            ;;
-    esac
-done
+Retention policy for old backups
 
-if [[ $# -ne 2 ]]; then
-    usage
-    exit 1
-fi
+Comprehensive logging to file and console
 
-if [[ ! -d "$1" ]]; then
-    echo "ERROR: $1 should be a directory."
-    exit 1
-fi
+Error handling and retry mechanisms
 
-if [[ "$2" != *.tar.gz ]]; then
-    echo "ERROR: $2 should be something with .tar.gz extension."
-    exit 1
-fi
+Prerequisites
+Python 3.8+
 
-if [[ $VERBOSE_OUTPUT -eq 0 ]]; then
-    if [[ $ADD_DATE_TO_FILENAME == "" ]]; then
-        tar -zcf $2 $1 &> /dev/null
-    else
-        tar -zcf "${ADD_DATE_TO_FILENAME}-${2}" $1 &> /dev/null
-    fi
-else
-    if [[ $ADD_DATE_TO_FILENAME == "" ]]; then
-        tar -zvcf $2 $1
-    else
-        tar -zvcf "${ADD_DATE_TO_FILENAME}-${2}" $1
-    fi
-fi
+Required Python packages: pyyaml, schedule
 
-if [[ ! -f "$2" ]]; then
-    echo "ERROR: Could not create the backup file."
-    exit 1
-fi
+For MySQL: mysqldump command-line tool
 
-echo "INFO: Backup is created successfully."
+For PostgreSQL: pg_dump command-line tool
+
+gzip for compression
+
+Installation
+Clone the repository:
+
+bash
+￼
+￼
+git clone https://github.com/yourusername/database-backup.git
+cd database-backup
+Install dependencies:
+
+bash
+￼
+￼
+pip install pyyaml schedule
+Configure the backup settings in backup_config.yaml:
+
+Set database type (mysql or postgres)
+
+Specify database credentials and connection details
+
+Define backup directory, retention period, and backup interval
+
+Usage
+Ensure the database tools (mysqldump or pg_dump) are installed and accessible.
+
+Update backup_config.yaml with your settings.
+
+Run the script:
+
+bash
+￼
+￼
+python backup_database.py
+The script will create the backup directory, set permissions, and start the backup schedule.
+
+Configuration
+Edit backup_config.yaml to customize:
+
+database: Database type, host, port, name, user, and password
+
+backup.directory: Path to store backups
+
+backup.retention_days: Number of days to keep backups
+
+backup.interval_hours: Frequency of backups in hours
+
+Logging
+Logs are written to backup.log and displayed on the console.
+
+Includes backup success/failure, cleanup operations, and errors.
+
+Deployment
+Run as a background process using nohup or a process manager like systemd.
+
+Example with nohup:
+
+bash
+￼
+￼
+nohup python backup_database.py &
+For production, consider using a systemd service for better process management.
+
+Contributing
+Fork the repository.
+
+Create a feature branch (git checkout -b feature/YourFeature).
+
+Commit changes (git commit -m 'Add YourFeature').
+
+Push to the branch (git push origin feature/YourFeature).
+
+Open a Pull Request.
+
+License
+MIT License - see LICENSE for details.
